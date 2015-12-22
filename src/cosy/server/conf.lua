@@ -5,10 +5,11 @@ return function (loader)
   Default.server = {
     interface = "127.0.0.1",
     port      = 0, -- random port
-    data      = os.getenv "HOME" .. "/.cosy/server.data",
     retry     = 5,
     name      = nil,
-    locale    = "en",
+    locale    = (os.getenv "LANG" or "en"):match "[^%.]+":gsub ("_", "-"),
+    log       = os.getenv "HOME" .. "/.cosy/server.log",
+    data      = os.getenv "HOME" .. "/.cosy/server.data",
   }
 
   Default.recaptcha = {

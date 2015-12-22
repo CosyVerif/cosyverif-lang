@@ -10,6 +10,7 @@ return function (loader)
 
   setmetatable (I18n, Metatable)
 
+  -- FIXME: remove
   function I18n.new (locale)
     return setmetatable ({
       _store  = {},

@@ -72,6 +72,8 @@ do
         print ("Testing {{{module}}} module:" % {
           module = module,
         })
+        print ("luapath", package.path)
+        print ("luacpath", package.cpath)
         status = os.execute ([[{{{lua}}} {{{path}}}/test.lua --verbose]] % {
           lua  = prefix .. "/local/cosy/5.1/bin/luajit",
           path = path,
@@ -79,6 +81,8 @@ do
         for _, version in ipairs {
           "5.2",
         } do
+          print ("luapath", package.path :gsub ("5%.1", version))
+          print ("luacpath", package.cpath:gsub ("5%.1", version))
           status = os.execute ([[
             export LUA_PATH="{{{luapath}}}"
             export LUA_CPATH="{{{luacpath}}}"
@@ -311,7 +315,7 @@ do
       local modules = {}
       for m in pairs (t.defined) do
         local module_name = "cosy." .. m
-        -- the three modules below define translations for the user only,
+        -- the modules below define translations for the user only,
         -- so we do not want to take them into account.
         if  module_name ~= "cosy.methods"
         and module_name ~= "cosy.parameters" then
@@ -352,8 +356,8 @@ do
     local script = [[
 #! /bin/bash
 
-user_dir=$(readlink "{{{prefix}}}/local/cosy/git/library")
-shellcheck --exclude=SC2024 "${user_dir}/bin/"*
+sourcedirectory=$(readlink "{{{prefix}}}/local/cosy/5.1/share/lua/5.1/cosy")
+shellcheck --exclude=SC2024 "${sourcedirectory}/../../bin/"*
     ]] % {
       prefix = os.getenv "COSY_PREFIX",
     }

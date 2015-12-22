@@ -1,0 +1,15 @@
+[submodule "luajit"]
+	path = luajit
+	url = http://luajit.org/git/luajit-2.0.git
+[submodule "luarocks"]
+	path = luarocks
+	url = https://github.com/keplerproject/luarocks.git
+[submodule "redis-lua"]
+	path = redis-lua
+	url = https://github.com/nrk/redis-lua.git
+[submodule "openresty"]
+	path = openresty
+	url = https://github.com/openresty/ngx_openresty
+[submodule "sh-realpath"]
+	path = sh-realpath
+	url = https://github.com/mkropat/sh-realpath

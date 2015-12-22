@@ -70,13 +70,13 @@ do
   "${cosy}" ${type}:create instance-${type} alinard/dd
 done
 echo "Iterating over users"
-"${cosy}" server:filter 'return function (store)
+"${cosy}" server:filter 'return function (coroutine, store)
     for user in store / "data" * ".*" do
       coroutine.yield (user)
     end
   end'
 echo "Iterating over projects"
-"${cosy}" server:filter 'return function (store)
+"${cosy}" server:filter 'return function (coroutine, store)
     for project in store / "data" * ".*" * ".*" do
       coroutine.yield (project)
     end

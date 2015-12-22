@@ -7,10 +7,12 @@ dist: trusty
 language: C
 
 install:
-  - ./bin/install --prefix=$HOME/cosy/server --mode=server --sourcepath=$(pwd) --in-ci
-  - ./bin/install --prefix=$HOME/cosy/client --mode=client --sourcepath=$(pwd) --in-ci
+  - ./bin/build-client --in-ci
+  - ./bin/build-server --prefix=$HOME/cosy/server --in-ci
 
 before_script:
+  - ${HOME}/cosy/server/local/cosy/5.1/bin/luarocks list
+  - ${HOME}/cosy/server/local/cosy/5.2/bin/luarocks list
   - rm    -rf output
   - mkdir -p  output/server
   - redis-server --save "" &

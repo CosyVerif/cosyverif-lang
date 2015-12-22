@@ -9,7 +9,7 @@ local Arguments     = loader.require "argparse"
 local Colors        = loader.require "ansicolors"
 
 Configuration.load {
-  "cosy.nginx",
+  "cosy.nginx", -- TODO: check
   "cosy.server",
 }
 
@@ -25,7 +25,7 @@ local parser = Arguments () {
   name        = name,
   description = i18n ["server:command"] % {},
 }
-local start  = parser:command "start" {
+local start = parser:command "start" {
   description = i18n ["server:start"] % {},
 }
 start:flag "-f" "--force" {
@@ -34,7 +34,7 @@ start:flag "-f" "--force" {
 start:flag "-c" "--clean" {
   description = i18n ["flag:clean"] % {},
 }
-local stop   = parser:command "stop" {
+local stop = parser:command "stop" {
   description = i18n ["server:stop"] % {},
 }
 stop:flag "-f" "--force" {
@@ -79,12 +79,9 @@ if arguments.start then
     package.loaded ["redis"] = nil
   end
 
-  os.execute ([==[
-    rm -f {{{log}}} {{{data}}}
-    luajit -e 'require "cosy.server".start ()' &
-  ]==] % {
-    data = Configuration.server.data,
-  })
+  os.remove (Configuration.server.log )
+  os.remove (Configuration.server.data)
+  os.execute [[ luajit -e 'require "cosy.server".start ()' & ]]
   local tries = 0
   local serverdata, nginxdata
   repeat
@@ -113,7 +110,7 @@ elseif arguments.stop then
     local result = client.server.stop {
       administration = data.token,
     }
-    if result  then
+    if result then
       print (Colors ("%{black greenbg}" .. i18n ["success"] % {}))
       os.exit (0)
     end

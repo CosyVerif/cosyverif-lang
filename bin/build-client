@@ -1,0 +1,300 @@
+#! /usr/bin/env bash
+
+for i in "$@"
+do
+  case ${i} in
+    --in-ci)
+      in_ci=true
+      shift # past argument=value
+    ;;
+    *)
+      echo "Usage: "
+      echo "  install [--in-ci]"
+      exit 1;
+    ;;
+  esac
+done
+
+parallel=$(nproc 2> /dev/null || sysctl -n hw.ncpu 2> /dev/null)
+
+if [ ! -z "${in_ci+x}" ]; then
+  red=''
+  green=''
+  nc=''
+else
+  red='\033[0;31m'
+  green='\033[0;32m'
+  nc='\033[0m'
+fi
+
+## Now cmd args have been parsed
+##################################
+
+parallel=1
+
+# Useful variables:
+cosy_temp=$(mktemp -d 2>/dev/null || mktemp -d -t cosy)
+cosy_prefix="${cosy_temp}/usr"
+cosy_bin_path="${cosy_prefix}/bin/cosy-path"
+cosy_bin_version="${cosy_prefix}/bin/cosy-version"
+cosy_bin_cli="${cosy_prefix}/bin/cosy"
+cosy_rockstree="${cosy_prefix}/local/cosy"
+cosy_log="${cosy_temp}/install.log"
+cosy_dependencies=(
+  luasec
+  ansicolors
+  argparse
+  copas
+  hotswap-http
+  i18n
+  layeredata
+  lua-cjson
+  lua-websockets
+  luafilesystem
+  luaposix
+  luasocket
+  lustache
+)
+
+echo -e "Prefix   : ${green}${cosy_prefix}${nc}"
+echo -e "Temporary: ${green}${cosy_temp}${nc}"
+echo -e "Log file : ${green}${cosy_log}${nc}"
+
+function error ()
+{
+  echo -e "${red}An error happened.${nc}"
+  echo -e "Please read log file: ${red}${cosy_log}${nc}."
+  if [ ! -z "${in_ci+x}" ]; then
+    cat "${cosy_log}"
+  fi
+  exit 1
+}
+
+# Install dependencies:
+function install_dependencies ()
+{
+  echo "Installing development packages."
+  case "$(uname -s)" in
+    "Linux")
+      sudo apt-get update  --yes
+      sudo apt-get install --yes git make clang gcc diffutils patch curl unzip \
+                                 perl build-essential \
+                                 libc6-dev libssl-dev
+      ;;
+    "Darwin")
+      HOMEBREW_PREFIX=$(brew config | grep "HOMEBREW_PREFIX" | tr -d ' \t' | cut -d ":" -f 2)
+      export CPATH="${HOMEBREW_PREFIX}/include:${CPATH}"
+      export LIBRARY_PATH="${HOMEBREW_PREFIX}/lib:${LIBRARY_PATH}"
+      export LD_LIBRARY_PATH="${HOMEBREW_PREFIX}/lib:${LD_LIBRARY_PATH}"
+      export DYLD_LIBRARY_PATH="${HOMEBREW_PREFIX}/lib:${DYLD_LIBRARY_PATH}"
+      brew update
+      brew install openssl
+      brew link --force openssl
+      ;;
+    *)
+      echo -e "Error: unknown OS: ${red}$(uname -s)${nc}."
+      exit 1
+      ;;
+  esac >> "${cosy_log}" 2>&1
+  export CPATH="${cosy_prefix}/include:${CPATH}"
+  export LIBRARY_PATH="${cosy_prefix}/lib:${LIBRARY_PATH}"
+  export LD_LIBRARY_PATH="${cosy_prefix}/lib:${LD_LIBRARY_PATH}"
+}
+
+# Install LuaJIT with 5.2 compatibility:
+function install_luajit ()
+{
+  echo "Installing luajit."
+  (
+    cd luajit || exit 1
+    cat > "${cosy_temp}/luajit.patch" <<EOL
+diff -rupN LuaJIT-2.0.4.back/Makefile LuaJIT-2.0.4/Makefile
+--- LuaJIT-2.0.4.back/Makefile	2015-10-02 17:19:16.774268017 +0200
++++ LuaJIT-2.0.4/Makefile	2015-10-02 17:11:14.533865635 +0200
+@@ -24,7 +24,7 @@ ABIVER=  5.1
+ # Change the installation path as needed. This automatically adjusts
+ # the paths in src/luaconf.h, too. Note: PREFIX must be an absolute path!
+ #
+-export PREFIX= /usr/local
++export PREFIX= ${cosy_rockstree}
+ export MULTILIB= lib
+ ##############################################################################
+
+diff -rupN LuaJIT-2.0.4.back/src/Makefile LuaJIT-2.0.4/src/Makefile
+--- LuaJIT-2.0.4.back/src/Makefile	2015-10-02 17:19:06.294172164 +0200
++++ LuaJIT-2.0.4/src/Makefile	2015-10-02 17:18:50.882031189 +0200
+@@ -100,7 +100,7 @@ XCFLAGS=
+ # enabled by default. Some other features that *might* break some existing
+ # code (e.g. __pairs or os.execute() return values) can be enabled here.
+ # Note: this does not provide full compatibility with Lua 5.2 at this time.
+-#XCFLAGS+= -DLUAJIT_ENABLE_LUA52COMPAT
++XCFLAGS+= -DLUAJIT_ENABLE_LUA52COMPAT
+ #
+ # Disable the JIT compiler, i.e. turn LuaJIT into a pure interpreter.
+ #XCFLAGS+= -DLUAJIT_DISABLE_JIT
+EOL
+    patch -p1 -i "${cosy_temp}/luajit.patch"
+    make -j"${parallel}"
+    make install CC="clang"
+    make clean
+    git checkout Makefile
+    git checkout src/Makefile
+    ln -sf "luajit-2.1.0-beta1" "${cosy_rockstree}/bin/luajit"
+    ln -sf "luajit-2.1"         "${cosy_rockstree}/include/luajit-2.0"
+  ) >> "${cosy_log}" 2>&1
+}
+
+function install_luarocks ()
+{
+  echo "Installing luarocks."
+  (
+    cd luarocks || exit 1
+    export PATH="${cosy_rockstree}/bin:${PATH}"
+    ./configure --prefix="${cosy_rockstree}" \
+                --lua-version="5.1" \
+                --lua-suffix="jit" \
+                --with-lua-bin="${cosy_rockstree}/bin/" \
+                --with-lua-include="${cosy_rockstree}/include/luajit-2.0/" \
+                --with-lua-lib="${cosy_rockstree}/lib/"
+    make bootstrap
+    make clean
+  ) >> "${cosy_log}" 2>&1
+}
+
+# Install cosyverif:
+function install_cosyverif ()
+{
+  echo "Installing rocks."
+  # Remove symlink to cosy to avoid modification of sources files by luarocks:
+  rm -rf "${cosy_rockstree}/share/lua/5.1/redis.lua"
+  rm -rf "${cosy_rockstree}/share/lua/5.1/cosy"
+  # Install luasec before everything to allow the use of HTTPS in luarocks:
+  options=(
+    LUA="${cosy_rockstree}/bin/luajit"
+  )
+  more_dependencies=()
+  export CC=clang
+  for dependency in ${cosy_dependencies[*]} ${more_dependencies[*]}; do
+    if "${cosy_rockstree}/bin/luarocks" list \
+        --porcelain \
+        --tree="${cosy_rockstree}" \
+        | grep --silent "${dependency}"; then
+      echo "  Not installing ${dependency} as it is already installed."
+    else
+      echo "  Installing ${dependency} as it is not installed."
+      # shellcheck disable=SC2086
+      "${cosy_rockstree}/bin/luarocks" install "${dependency}" ${options[*]} \
+          >> "${cosy_log}" 2>&1
+    fi
+  done
+  # Create symlinks in rockstree:
+  rm -rf "${cosy_rockstree}/share/lua/5.1/redis.lua"
+  cp     "redis-lua/src/redis.lua" \
+         "${cosy_rockstree}/share/lua/5.1/redis.lua"
+  rm -rf "${cosy_rockstree}/share/lua/5.1/cosy"
+  cp -r  "src/cosy" \
+         "${cosy_rockstree}/share/lua/5.1/cosy"
+}
+
+function install_bin ()
+{
+  base=$(basename "${cosy_bin_path}")
+  cat > "${cosy_bin_path}" <<EOF
+#! /bin/bash
+
+$(cat "sh-realpath/realpath.sh" | grep -v "#!")
+
+cosy_where=\$(realpath "\${BASH_SOURCE}")
+cosy_where=\$(dirname  "\${cosy_where}")
+cosy_where=\$(dirname  "\${cosy_where}")
+export COSY_PREFIX="\${cosy_where}"
+
+export PATH="\${COSY_PREFIX}/bin:\${COSY_PREFIX}/local/cosy/bin:\${PATH}"
+export LUA_PATH="\${COSY_PREFIX}/local/cosy/share/lua/5.1/?.lua;\${COSY_PREFIX}/local/cosy/share/lua/5.1/?/init.lua"
+export LUA_CPATH="\${COSY_PREFIX}/local/cosy/lib/lua/5.1/?.so"
+
+export LIBRARY_PATH="\${COSY_PREFIX}/lib:${LIBRARY_PATH}"
+export LD_LIBRARY_PATH="\${COSY_PREFIX}/lib:${LD_LIBRARY_PATH}"
+export DYLD_LIBRARY_PATH="\${COSY_PREFIX}/lib:${DYLD_LIBRARY_PATH}"
+EOF
+  chmod a+x "${cosy_bin_path}"
+
+  cat > "${cosy_bin_version}" <<EOF
+#! /bin/bash
+
+echo "$(git describe)"
+EOF
+  chmod a+x "${cosy_bin_version}"
+
+  cat > "${cosy_bin_cli}" <<EOF
+#! /bin/bash
+
+root=\$(dirname "\$0")
+# shellcheck source=/dev/null
+source "\${root}/${base}"
+luajit "\${COSY_PREFIX}/local/cosy/share/lua/5.1/cosy/cli/init.lua" "\$@"
+EOF
+  chmod a+x "${cosy_bin_cli}"
+}
+
+function fix_string ()
+{
+  echo "$1" \
+    | sed -e 's/^[[:space:]]+/ /' \
+    | sed -e 's/^[[:space:]]*//' \
+    | sed -e 's/[[:space:]]*$//' \
+    | tr '/' '-' \
+    | tr '[:upper:]' '[:lower:]'
+}
+
+# Generate the package:
+function generate_package ()
+{
+  version=$(fix_string "$(git describe)")
+  os=$(fix_string "$(uname -s)")
+  arch=$(fix_string "$(uname -m)")
+  archive="cosy-client-${version}-${os}-${arch}.tar.gz"
+  echo -e "Packaging in ${green}${cosy_temp}/${archive}${nc}."
+  # Clean:
+  {
+    "${cosy_prefix}/local/cosy/bin/luarocks" remove \
+       --tree="${cosy_prefix}/local/cosy" luarocks
+    rm -rf  "${cosy_prefix}/local/cosy/lib/luarocks"
+    sed -i "" \
+        -e "s/export COSY_PREFIX=.*/export COSY_PREFIX=\"...\"/" \
+        "${cosy_prefix}/bin/cosy-path"
+  } >> "${cosy_log}" 2>&1
+  # Package:
+  (
+    cd "${cosy_temp}" || exit 1
+    rm -f   "${archive}"
+    tar czf "${archive}" "usr"
+  ) >> "${cosy_log}" 2>&1
+}
+
+function error ()
+{
+  echo -e "${red}An error happened.${nc}"
+  echo -e "Please read log file: ${red}${cosy_log}${nc}."
+  if [ ! -z "${in_ci+x}" ]; then
+    cat "${cosy_log}"
+  fi
+  exit 1
+}
+
+git submodule init
+git submodule update
+mkdir -p "${cosy_prefix}"
+mkdir -p "${cosy_prefix}/bin"
+mkdir -p "${cosy_prefix}/lib"
+trap error ERR
+install_dependencies
+install_luajit
+install_luarocks
+install_cosyverif
+install_bin
+generate_package
+
+if [ ! -z "${in_ci+x}" ]; then
+  cat "${cosy_log}"
+fi

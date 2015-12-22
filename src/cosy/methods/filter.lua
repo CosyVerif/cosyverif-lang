@@ -6,6 +6,7 @@ local Parameters    = loader.load "cosy.parameters"
 local Scheduler     = loader.load "cosy.scheduler"
 local Store         = loader.load "cosy.store"
 local Value         = loader.load "cosy.value"
+local Coromake      = loader.require "coroutine.make"
 local Websocket     = loader.require "websocket"
 
 Configuration.load {
@@ -18,7 +19,7 @@ Scheduler.addthread (function ()
   assert (client:connect ("ws://{{{interface}}}:{{{port}}}" % {
     interface = Configuration.server.interface,
     port      = _G.port,
-  }, "cosyfilter"))
+  }, "cosy:filter"))
   local request = client:receive ()
   request       = Value.decode (request)
   local store   = Store.new ()
@@ -32,7 +33,8 @@ Scheduler.addthread (function ()
       iterator = Parameters.iterator,
     },
   })
-  local iterator = coroutine.create (request.iterator)
+  local coro     = Coromake ()
+  local iterator = coro.create (request.iterator)
   local function sanitize (t)
     if type (t) ~= "table" then
       return t
@@ -45,15 +47,17 @@ Scheduler.addthread (function ()
     end
   end
   repeat
-    local ok, result = coroutine.resume (iterator, view)
-    result = sanitize (result)
-    client:send (Value.expression {
-      success  = ok,
-      response = ok and result or nil,
-      error    = not ok and result or nil,
-      finished = coroutine.status (iterator) == "dead" or nil
-    })
-  until coroutine.status (iterator) == "dead"
+    local ok, result = coro.resume (iterator, coro, view)
+    if result ~= nil then
+      result = sanitize (result)
+      client:send (Value.expression {
+        success  = ok,
+        response = ok and result or nil,
+        error    = not ok and result or nil,
+        finished = coro.status (iterator) == "dead" or nil
+      })
+    end
+  until coro.status (iterator) == "dead"
   client:send (Value.expression {
     success  = true,
     finished = true,

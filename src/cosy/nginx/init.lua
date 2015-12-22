@@ -272,12 +272,12 @@ fi
     Nginx.stop      ()
     Nginx.configure ()
     os.execute ([[
-      {{{nginx}}} -p {{{directory}}} -c {{{configuration}}} 2> {{{error}}}
+      {{{nginx}}} -p {{{directory}}} -c {{{configuration}}} > {{{log}}} 2>&1
     ]] % {
       nginx         = Configuration.http.nginx .. "/sbin/nginx",
       directory     = Configuration.http.directory,
       configuration = Configuration.http.configuration,
-      error         = Configuration.http.error,
+      log           = Configuration.http.log,
     })
     Nginx.stopped = false
   end
@@ -287,12 +287,16 @@ fi
       [ -f {{{pid}}} ] && {
         kill -s QUIT $(cat {{{pid}}})
       }
-      rm -rf {{{directory}}} {{{pid}}} {{{error}}} {{{configuration}}}
     ]] % {
-      pid           = Configuration.http.pid,
-      configuration = Configuration.http.configuration,
-      error         = Configuration.http.error,
-      directory     = Configuration.http.directory,
+      pid = Configuration.http.pid,
+    })
+    os.remove (Configuration.http.pid)
+    os.remove (Configuration.http.configuration)
+    os.remove (Configuration.http.log)
+    os.execute ([[
+      rm -rf {{{directory}}}
+    ]] % {
+      directory = Configuration.http.directory,
     })
     Nginx.directory = nil
     Nginx.stopped   = true

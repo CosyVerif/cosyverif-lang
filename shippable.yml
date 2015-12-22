@@ -1,22 +1,27 @@
-language: php
-php:
-  - 5.3
+build_environment: Ubuntu 14.04
+
+language: node_js
 
 services:
  - redis
 
 install:
   - sudo apt-get autoremove -y
-  - ./bin/install --prefix=$HOME/cosy/server --mode=server --sourcepath=$(pwd) --in-ci
-  - ./bin/install --prefix=$HOME/cosy/client --mode=client --sourcepath=$(pwd) --in-ci
+  - sudo apt-get install tree
+  - ./bin/build-client --in-ci
+  - ./bin/build-server --prefix=$HOME/cosy/server --in-ci
 
 before_script:
+  - ${HOME}/cosy/server/local/cosy/5.1/bin/luarocks list
+  - ${HOME}/cosy/server/local/cosy/5.2/bin/luarocks list
   - rm    -rf shippable/testresults
   - mkdir -p  shippable/testresults
   - rm    -rf output
   - mkdir -p  output/server
 
 script:
+  - source ${HOME}/cosy/server/bin/cosy-path && echo $LUA_PATH && echo $LUA_CPATH
+  - source ${HOME}/cosy/server/bin/cosy-path && luajit -e 'require "bcrypt"'
   - ${HOME}/cosy/server/bin/cosy-check output/server --test-format=junit
 
 after_script:
