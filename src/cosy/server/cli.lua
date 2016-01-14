@@ -83,6 +83,7 @@ Configuration.load {
 local i18n   = I18n.load {
   "cosy.client",
   "cosy.server",
+  "cosy.library",
 }
 i18n._locale = Configuration.server.locale
 
