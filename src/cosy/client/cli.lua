@@ -228,6 +228,7 @@ function Cli.start (cli)
 
   Configuration.load {
     "cosy.client",
+    "cosy.library",
   }
 
   local data = File.decode (Configuration.cli.data) or {}
