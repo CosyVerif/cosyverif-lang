@@ -147,15 +147,15 @@ function Protocol:on_message (message)
       })
       platform:log (message.data)
       for i = #patches, 1, -1 do
-        local patch = patches [i]
-        if patch.status == "applied" or patch.status == "sent" then
+        local patch2 = patches [i]
+        if patch2.status == "applied" or patch2.status == "sent" then
           platform:log (("Unapply patch ${id} on ${resource}," ..
                          " as a previous one has been rejected.") % {
             id       = patch.id,
             resource = resource,
           })
-          disabled_load (patch.reverse)
-          patch.status = "unapplied"
+          disabled_load (patch2.reverse)
+          patch2.status = "unapplied"
         end
       end
       patches:pop ()

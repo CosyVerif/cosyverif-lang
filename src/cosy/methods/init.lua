@@ -14,8 +14,8 @@ return function (loader)
   local Time          = loader.load "cosy.time"
   local Token         = loader.load "cosy.token"
   local Value         = loader.load "cosy.value"
-  local Http          = loader.require "copas.http"
   local Layer         = loader.require "layeredata"
+  local Posix         = loader.require "posix"
   local Websocket     = loader.require "websocket"
 
   Configuration.load {
@@ -132,21 +132,19 @@ return function (loader)
         authentication = Parameters.token.authentication,
       }
     })
-    local server_socket, server_port
+    local server_socket
     local running       = Scheduler.running ()
     local results       = {}
     local addserver     = Scheduler.addserver
     Scheduler.addserver = function (s, f)
-      local _, port = assert (s:getsockname ())
       server_socket = s
-      server_port   = port
       addserver (s, f)
     end
     Websocket.server.copas.listen {
       interface = Configuration.server.interface,
       port      = 0,
       protocols = {
-        ["cosyfilter"] = function (ws)
+        ["cosy:filter"] = function (ws)
           ws:send (Value.expression (back_request))
           while ws.state == "OPEN" do
             local message = ws:receive ()
@@ -161,9 +159,20 @@ return function (loader)
       }
     }
     Scheduler.addserver = addserver
-    os.execute ([[luajit -e '_G.port = {{{port}}}; require "cosy.methods.filter"' &]] % {
-      port = server_port,
-    })
+    if Posix.fork () == 0 then
+      package.loaded ["copas"     ] = nil
+      package.loaded ["copas.ev"  ] = nil
+      package.loaded ["ev"        ] = nil
+      package.loaded ["hotswap.ev"] = nil
+      package.loaded ["hotswap"   ] = nil
+      local Filter = loader.require "cosy.methods.filter"
+      local _, port = server_socket:getsockname ()
+      Filter.new ("ws://{{{interface}}}:{{{port}}}" % {
+        interface = Configuration.server.interface,
+        port      = port,
+      })
+      os.exit (0)
+    end
     return function ()
       repeat
         local result = results [1]
@@ -221,7 +230,7 @@ return function (loader)
       local body = "secret="    .. Configuration.recaptcha.private_key
                 .. "&response=" .. request.captcha
                 .. "&remoteip=" .. request.ip
-      local response, status = Http.request (url, body)
+      local response, status = loader.request (url, body)
       assert (status == 200)
       response = Json.decode (response)
       assert (response)
