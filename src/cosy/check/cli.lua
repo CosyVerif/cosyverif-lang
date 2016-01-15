@@ -6,21 +6,39 @@ local Lustache  = loader.require "lustache"
 local Colors    = loader.require 'ansicolors'
 local Reporter  = loader.require "luacov.reporter"
 local Arguments = loader.require "argparse"
-
-local prefix = os.getenv "COSY_PREFIX"
-local name   = prefix .. "/bin/cosy-check"
-name         = name:gsub (os.getenv "HOME", "~")
+local Socket    = loader.require "socket"
 
 local parser = Arguments () {
-  name        = name,
+  name        = "cosy-check",
   description = "Perform various checks on the cosy sources",
 }
 parser:option "--test-format" {
   description = "format for the test results (supported by busted)",
   default     = "TAP",
 }
+parser:option "--output" {
+  description = "output directory",
+  default     = "output",
+}
 
 local arguments = parser:parse ()
+
+local source
+do
+  local path    = package.searchpath ("cosy.check.cli", package.path)
+  local handler = assert (io.popen ([[
+    . "{{{prefix}}}/bin/realpath.sh"
+    path="{{{path}}}"
+    path=$(dirname "${path}")
+    path=$(dirname "${path}")
+    realpath "${path}"
+  ]] % {
+    prefix = loader.prefix,
+    path   = path,
+  }, "r"))
+  source = assert (handler:read "*l")
+  handler:close ()
+end
 
 local string_mt = getmetatable ""
 
@@ -37,24 +55,25 @@ function _G.string.split (s, delimiter)
 end
 
 -- Compute path:
-local main = package.searchpath ("cosy.check", package.path)
+local main = package.searchpath ("cosy.check.cli", package.path)
 if main:sub (1, 2) == "./" then
   main = Lfs.currentdir () .. "/" .. main:sub (3)
 end
-main = main:gsub ("/check/init.lua", "")
+main = main:gsub ("/check/cli.lua", "")
 
 local status = true
+
+Lfs.mkdir (arguments.output)
 
 -- luacheck
 -- ========
 
 do
   status = os.execute ([[
-    cd {{{path}}}/..
-    {{{luacheck}}} --std max --std +busted cosy/*/*.lua
+    "{{{prefix}}}/bin/luacheck" --std max --std +busted "{{{source}}}"
   ]] % {
-    luacheck = prefix .. "/local/cosy/5.1/bin/luacheck",
-    path     = main,
+    prefix = loader.prefix,
+    source = source,
   }) and status
 end
 
@@ -62,7 +81,13 @@ end
 -- ======
 
 do
-  Lfs.mkdir "test"
+  local server = Socket.bind ("*", 0)
+  local _, port = server:getsockname ()
+  server:close ()
+  os.execute (loader.prefix .. [[/bin/cosy-server start --force --clean --alias=__busted__ --port={{{port}}}]] % {
+    port = port,
+  })
+  Lfs.mkdir (arguments.output .. "/test")
   local test_id = 1
   for module in Lfs.dir (main) do
     local path = main .. "/" .. module
@@ -72,31 +97,25 @@ do
         print ("Testing {{{module}}} module:" % {
           module = module,
         })
-        status = os.execute ([[{{{lua}}} {{{path}}}/test.lua --verbose]] % {
-          lua  = prefix .. "/local/cosy/5.1/bin/luajit",
-          path = path,
+        status = os.execute ([[ "{{{prefix}}}/bin/busted" --verbose --pattern=test "{{{path}}}" ]] % {
+          prefix = loader.prefix,
+          path   = path,
         }) and status
-        for _, version in ipairs {
-          "5.2",
-        } do
-          status = os.execute ([[
-            export LUA_PATH="{{{luapath}}}"
-            export LUA_CPATH="{{{luacpath}}}"
-            {{{lua}}} {{{path}}}/test.lua --verbose --coverage --output={{{format}}} >> {{{output}}}
-          ]] % {
-            lua      = "lua" .. version,
-            path     = path:gsub ("5%.1", version),
-            format   = arguments.test_format,
-            output   = "test/" .. tostring (test_id),
-            luapath  = package.path :gsub ("5%.1", version),
-            luacpath = package.cpath:gsub ("5%.1", version),
-          }) and status
-          test_id = test_id + 1
-        end
-        print ()
+        status = os.execute ([[ "{{{prefix}}}/bin/busted" --output={{{format}}} --pattern=test "{{{path}}}" > {{{output}}} 2> /dev/null ]] % {
+          prefix   = loader.prefix,
+          path     = path,
+          format   = arguments.test_format,
+          output   = arguments.output .. "/test/" .. tostring (test_id),
+        }) and status
+        os.execute ([[ "{{{prefix}}}/bin/busted" --verbose --coverage --pattern=test "{{{path}}}" > /dev/null ]] % {
+          prefix   = loader.prefix,
+          path     = path,
+        })
+        test_id = test_id + 1
       end
     end
   end
+  os.execute (loader.prefix .. [[/bin/cosy-server stop --force --alias=__busted__]])
   print ()
 end
 
@@ -130,7 +149,7 @@ do
     then
       current = line
       if current ~= "Summary" then
-        local filename = line:match (prefix .. "/local/cosy/[^/]+/share/lua/[^/]+/(.*)")
+        local filename = line:match "/(cosy/.-%.lua)$"
         if filename and filename:match "^cosy" then
           local parts = {}
           for part in filename:gmatch "[^/]+" do
@@ -145,7 +164,7 @@ do
     elseif output then
       output:write (line .. "\n")
     else
-      local filename = line:match (prefix .. "/local/cosy/[^/]+/share/lua/[^/]+/(.*)")
+      local filename = line:match "/(cosy/.-%.lua)$"
       if filename and filename:match "^cosy" then
         line = line:gsub ("\t", " ")
         local parts = line:split " "
@@ -311,7 +330,7 @@ do
       local modules = {}
       for m in pairs (t.defined) do
         local module_name = "cosy." .. m
-        -- the three modules below define translations for the user only,
+        -- the modules below define translations for the user only,
         -- so we do not want to take them into account.
         if  module_name ~= "cosy.methods"
         and module_name ~= "cosy.parameters" then
@@ -349,19 +368,36 @@ do
   -- We know that we are in developper mode. Thus, there is a link to the user
   -- sources of cosy library.
   if os.execute "command -v shellcheck > /dev/null 2>&1" then
-    local script = [[
-#! /bin/bash
-
-user_dir=$(readlink "{{{prefix}}}/local/cosy/git/library")
-shellcheck --exclude=SC2024 "${user_dir}/bin/"*
+    local s = os.execute ([[
+      . "{{{prefix}}}/bin/realpath.sh"
+      shellcheck --exclude=SC2024 $(realpath "{{{path}}}")/../../bin/*
     ]] % {
-      prefix = os.getenv "COSY_PREFIX",
-    }
-    local file = io.open ("sc-script", "w")
-    file:write (script)
-    file:close ()
-    status = (os.execute [[bash sc-script]]) and status
+      prefix = loader.prefix,
+      path   = source,
+    })
+    if s then
+      print (Colors ("Shellcheck detects %{bright green}no problems%{reset}."))
+    end
+    status = s and status
   end
+end
+
+-- Scenarios
+-- ==========
+
+do
+  local server  = Socket.bind ("*", 0)
+  local _, port = server:getsockname ()
+  server:close ()
+
+  os.execute (loader.prefix .. [[/bin/cosy-server start --force --clean --alias=__scenario__ --port={{{port}}} ]] % {
+    port = port,
+  })
+  status = os.execute ([[ ./tests/user.sh __scenario__ "{{{prefix}}}/bin/cosy" --alias=__scenario__ --server="http://127.0.0.1:{{{port}}}" ]] % {
+    prefix = loader.prefix,
+    port   = port,
+  }) and status
+  os.execute (loader.prefix .. [[/bin/cosy-server stop --force --alias=__scenario__ ]])
 end
 
 os.exit (status and 0 or 1)

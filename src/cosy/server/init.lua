@@ -1,19 +1,12 @@
-os.remove (os.getenv "HOME" .. "/.cosy/server.log")
-
 local Scheduler = require "copas.ev"
--- Make scheduler the default for copas:
-Scheduler.make_default ()
--- Make its coroutine the default one, also for copas:
-_G.coroutine    = Scheduler._coroutine
 local Hotswap   = require "hotswap.ev".new {
   loop = Scheduler._loop,
 }
-
 local loader = require "cosy.loader.lua" {
-  logto     = os.getenv "HOME" .. "/.cosy/server.log",
+  alias     = _G.cosy_server_alias or "default",
+  logto     = false,
   hotswap   = Hotswap,
   scheduler = Scheduler,
-  coroutine = coroutine,
 }
 local Configuration = loader.load "cosy.configuration"
 local Digest        = loader.load "cosy.digest"
@@ -28,15 +21,26 @@ local Token         = loader.load "cosy.token"
 local Value         = loader.load "cosy.value"
 local App           = loader.load "cosy.configuration.layers".app
 local Layer         = loader.require "layeredata"
+local Posix         = loader.require "posix"
 local Websocket     = loader.require "websocket"
-local Ffi           = loader.require "ffi"
 
-Configuration.load "cosy.server"
+Configuration.load {
+  "cosy.server",
+  "cosy.nginx",
+}
+
+loader.logto = Configuration.server.log
+Logger.update ()
 
 local i18n   = I18n.load {
   "cosy.server",
 }
 i18n._locale = Configuration.locale
+
+do
+  local data = File.decode (Configuration.server.data) or {}
+  Configuration.http.port = data.http_port or Configuration.http.port
+end
 
 local Server = {}
 
@@ -97,17 +101,21 @@ local function call_parameters (method, parameters)
 end
 
 function Server.start ()
+  Scheduler._loop:fork ()
   App.server            = {}
   App.server.passphrase = Digest (Random ())
   App.server.token      = Token.administration ()
   local addserver       = Scheduler.addserver
+
   Scheduler.addserver   = function (s, f)
     local ok, port = s:getsockname ()
     if ok then
-      App.server.port = port
+      App.server.socket = s
+      App.server.port   = port
     end
     addserver (s, f)
   end
+
   Server.ws = Websocket.server.copas.listen {
     interface = Configuration.server.interface,
     port      = Configuration.server.port,
@@ -236,6 +244,7 @@ function Server.start ()
     }
   }
   Scheduler.addserver = addserver
+
   Logger.debug {
     _    = i18n ["websocket:listen"],
     host = Configuration.server.interface,
@@ -257,16 +266,18 @@ function Server.start ()
   Nginx.start ()
 
   do
-    Ffi.cdef [[ unsigned int getpid (); ]]
     File.encode (Configuration.server.data, {
+      alias     = loader.alias,
+      http      = {
+        port      = Configuration.http.port,
+        interface = Configuration.http.interface,
+      },
       token     = Configuration.server.token,
       interface = Configuration.server.interface,
       port      = Configuration.server.port,
-      pid       = Ffi.C.getpid (),
+      pid       = Posix.getpid "pid",
     })
-    os.execute ([[ chmod 0600 {{{file}}} ]] % {
-      file = Configuration.server.data,
-    })
+    Posix.chmod (Configuration.server.data, "0600")
   end
 
   Scheduler.loop ()
@@ -274,8 +285,8 @@ end
 
 function Server.stop ()
   os.remove (Configuration.server.data)
+  Scheduler.removeserver (App.server.socket)
   Nginx.stop ()
-  os.exit (0)
 end
 
 return Server

@@ -1,4 +1,6 @@
 return [==[
+#! /usr/bin/env bash
+
 red='\033[0;31m'
 green='\033[0;32m'
 nc='\033[0m'
@@ -70,39 +72,13 @@ if [ -z "${package_uri}" ]; then
   get "https://api.github.com/repos/cosyverif/library/releases/latest" \
       "latest-release.json"
   version=$(grep "tag_name" "latest-release.json" | tr '",' ' ' | tr -d ' \t' | cut -d ":" -f 2)
-  package_uri="https://github.com/CosyVerif/library/releases/download/${version}/cosy-client-${os}-${arch}.tar.gz"
+  package_uri="https://github.com/CosyVerif/library/releases/download/${version}/cosy-client-${os}-${arch}.sh"
 fi
 
 echo -e "Temporary directory: ${green}${tempwd}${nc}"
 echo -e "Log file           : ${green}${log}${nc}"
 echo -e "Prefix             : ${green}${prefix}${nc}"
 echo -e "Package URI        : ${green}${package_uri}${nc}"
-
-function download ()
-{
-  echo -e "Downloading package ${green}${package_uri}${nc}."
-  get "${package_uri}" "client.tar.gz"
-}
-
-function install ()
-{
-  echo -e "Installing package to ${green}${prefix}${nc}."
-  {
-    mkdir -p "${prefix}"
-    tar xf  "client.tar.gz" \
-            --preserve-permissions \
-            --strip-components=1 \
-            --directory "${prefix}"
-  } >> "${log}" 2>&1
-}
-
-function fix ()
-{
-  echo -e "Fixing COSY_PREFIX in ${green}${prefix}/bin/cosy-path${nc}."
-  sed -i -e  "s|export COSY_PREFIX=.*|export COSY_PREFIX=\"${prefix}\"|" \
-          "${prefix}/bin/cosy-path" \
-    >> "${log}" 2>&1
-}
 
 function error ()
 {
@@ -113,14 +89,27 @@ function error ()
 }
 
 trap error ERR
-download
-install
-fix
-"${prefix}/bin/cosy" --server="ROOT_URI" --help \
-    >> "${log}" 2>&1
 
-echo "You can now try the following commands:"
-echo "- ${prefix}/bin/cosy            : to run the cosy client"
-echo "- ${prefix}/bin/cosy-version    : to get version number"
-echo "- ${prefix}/bin/cosy-uninstall  : to uninstall cosy"
+echo -e -n "Downloading package ${green}${package_uri}${nc}... "
+get "${package_uri}" "install-client.sh" \
+  >> "${log}" 2>&1 \
+  && echo -e "${green}success${nc}" \
+  || echo -e "${red}failure${nc}"
+
+chmod a+x install-client.sh
+
+echo -e -n "Installing package to ${green}${prefix}${nc}... "
+./install-client.sh --target "${prefix}" \
+  >> "${log}" 2>&1 \
+  && echo -e "${green}success${nc}" \
+  || echo -e "${red}failure${nc}"
+
+echo -e -n "Testing the cosy command... "
+"${prefix}/bin/cosy" --server="ROOT_URI" --help \
+  >> "${log}" 2>&1 \
+  && echo -e "${green}success${nc}" \
+  || echo -e "${red}failure${nc}"
+
+echo "You can now try the following command:"
+echo "  ${prefix}/bin/cosy: to run the cosy client"
 ]==]

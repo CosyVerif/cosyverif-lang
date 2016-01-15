@@ -1,26 +1,24 @@
-language: php
-php:
-  - 5.3
-
-services:
- - redis
+build_image: shippableimages/ubuntu1404_python
 
 install:
-  - sudo apt-get autoremove -y
-  - ./bin/install --prefix=$HOME/cosy/server --mode=server --sourcepath=$(pwd) --in-ci
-  - ./bin/install --prefix=$HOME/cosy/client --mode=client --sourcepath=$(pwd) --in-ci
+  - ./bin/build-server --in-ci --prefix=$HOME/cosy
+  - ./bin/build-client --in-ci
 
 before_script:
-  - rm    -rf shippable/testresults
-  - mkdir -p  shippable/testresults
-  - rm    -rf output
-  - mkdir -p  output/server
+  - rm -rf output && mkdir -p output
+  - redis-server & sleep 1
 
 script:
-  - ${HOME}/cosy/server/bin/cosy-check output/server --test-format=junit
+  - ${HOME}/cosy/bin/cosy-check --output=output --test-format=junit
 
-after_script:
-  - for file in output/server/test/*; do mv ${file} shippable/testresults/$(basename ${file}).xml; done
+after_failure:
+  - cat ${HOME}/.cosy/__busted__/nginx/access.log
+  - cat ${HOME}/.cosy/__busted__/nginx/error.log
+  - cat ${HOME}/.cosy/__scenario__/nginx/access.log
+  - cat ${HOME}/.cosy/__scenario__/nginx/error.log
+
+after_success:
+  - for file in output/test/*; do mv ${file} shippable/testresults/$(basename ${file}).xml; done
 
 notifications:
   email:
@@ -28,4 +26,4 @@ notifications:
       - alban@linard.fr
       - leprieur@lipn.univ-paris13.fr
     on_success: change
-    on_failure: always
+    on_failure: change

@@ -1,31 +1,33 @@
 #! /bin/bash
 
 if [ "$#" -lt 2 ]; then
-  echo "usage: $0 path/to/cosy server-url"
-  echo "ex: $0 /home/cosy/bin/cosy http://public.cosyverif.org"
+  echo "usage: $0 <server-alias> <cosy command> <options>"
+  echo "for instance: $0 myserver /home/cosy/bin/cosy --alias=myalias"
   exit
 fi
 
+server="$1"
+shift
 cosy="$1"
-url="$2"
+shift
+options=$*
 
-paths=$(dirname "${cosy}")
-source "${paths}/cosy-path"
+bin_dir=$(dirname "${cosy}")
 
 passwords=$(mktemp 2>/dev/null || mktemp -t cosy-user)
 echo "password" >> "${passwords}"
 echo "password" >> "${passwords}"
 
-token=$(luajit -e " \
-local file = io.open '${HOME}/.cosy/server.data' \
+token=$("${bin_dir}/lua" -e " \
+local file = io.open '${HOME}/.cosy/${server}/server.data' \
 if file then
   local data = file:read '*all' \
   data       = loadstring ('return ' .. data) () \
   print (data.token)
 end")
 if [ "${token}" = "" ]; then
-  echo -n "Administration token? "
-  read token
+  echo "No administration token found"
+  exit 1
 fi
 
 #echo "Stopping daemon:"
@@ -35,55 +37,55 @@ fi
 #echo "Starting server:"
 #"${cosy}" server:start --force --clean
 echo "Printing available methods:"
-"${cosy}" --server="${url}" --help
+"${cosy}" ${options} --help
 echo "Server information:"
-"${cosy}" server:information
+"${cosy}" ${options} server:information
 echo "Terms of Service:"
-"${cosy}" server:tos
+"${cosy}" ${options} server:tos
 echo "Creating user alinard:"
-"${cosy}" user:create --administration ${token} "alban.linard@gmail.com" alinard < "${passwords}"
+"${cosy}" ${options} user:create --administration ${token} "alban.linard@gmail.com" alinard < "${passwords}"
 echo "Failing at creating user alban:"
-"${cosy}" user:create --administration ${token} "alban.linard@gmail.com" alban < "${passwords}"
+"${cosy}" ${options} user:create --administration ${token} "alban.linard@gmail.com" alban < "${passwords}"
 echo "Creating user alban:"
-"${cosy}" user:create --administration ${token} "jiahua.xu16@gmail.com" alban < "${passwords}"
+"${cosy}" ${options} user:create --administration ${token} "jiahua.xu16@gmail.com" alban < "${passwords}"
 echo "Authenticating user alinard:"
-"${cosy}" user:authenticate alinard < "${passwords}"
+"${cosy}" ${options} user:authenticate alinard < "${passwords}"
 echo "Authenticating user alban:"
-"${cosy}" user:authenticate alban < "${passwords}"
+"${cosy}" ${options} user:authenticate alban < "${passwords}"
 echo "Updating user alban:"
-"${cosy}" user:update --name="Alban Linard" --email="alban.linard@lsv.ens-cachan.fr"
+"${cosy}" ${options} user:update --name="Alban Linard" --email="alban.linard@lsv.ens-cachan.fr"
 echo "Sending validation again:"
-"${cosy}" user:send-validation
+"${cosy}" ${options} user:send-validation
 echo "Showing user alban:"
-"${cosy}" user:information alban
+"${cosy}" ${options} user:information alban
 echo "Deleting user alban:"
-"${cosy}" user:delete
+"${cosy}" ${options} user:delete
 echo "Failing at authenticating user alban:"
-"${cosy}" user:authenticate alban < "${passwords}"
+"${cosy}" ${options} user:authenticate alban < "${passwords}"
 echo "Authenticating user alinard:"
-"${cosy}" user:authenticate alinard < "${passwords}"
+"${cosy}" ${options} user:authenticate alinard < "${passwords}"
 echo "Creating project"
-"${cosy}" project:create dd
+"${cosy}" ${options} project:create dd
 for type in formalism model service execution scenario
 do
   echo "Creating ${type} in project"
-  "${cosy}" ${type}:create instance-${type} alinard/dd
+  "${cosy}" ${options} ${type}:create instance-${type} alinard/dd
 done
 echo "Iterating over users"
-"${cosy}" server:filter 'return function (store)
+"${cosy}" ${options} server:filter 'return function (coroutine, store)
     for user in store / "data" * ".*" do
       coroutine.yield (user)
     end
   end'
 echo "Iterating over projects"
-"${cosy}" server:filter 'return function (store)
+"${cosy}" ${options} server:filter 'return function (coroutine, store)
     for project in store / "data" * ".*" * ".*" do
       coroutine.yield (project)
     end
   end'
 echo "Deleting project"
-"${cosy}" project:delete alinard/dd
+"${cosy}" ${options} project:delete alinard/dd
 echo "Deleting user alinard:"
-"${cosy}" user:delete
+"${cosy}" ${options} user:delete
 
 rm "${passwords}"

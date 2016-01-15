@@ -34,7 +34,7 @@ return function (loader)
   setmetatable (Configuration, Metatable)
 
   local files = {
-    etc  = (os.getenv "COSY_PREFIX" or "") .. "/etc/cosy.conf",
+    etc  = loader.prefix .. "/etc/cosy.conf",
     home = os.getenv "HOME" .. "/.cosy/cosy.conf",
     pwd  = os.getenv "PWD"  .. "/cosy.conf",
   }

@@ -19,7 +19,9 @@ return function (loader)
       token = ref.resource.token,
       tag   = ref.resource.tag,
       data  = ref.resource.data,
+      info  = ref.resource.info,
     },
+    info = {},
     email = {
       ["/"] = {},
     },

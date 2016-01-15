@@ -14,8 +14,8 @@ return function (loader)
   local Time          = loader.load "cosy.time"
   local Token         = loader.load "cosy.token"
   local Value         = loader.load "cosy.value"
-  local Http          = loader.require "copas.http"
   local Layer         = loader.require "layeredata"
+  local Posix         = loader.require "posix"
   local Websocket     = loader.require "websocket"
 
   Configuration.load {
@@ -90,10 +90,17 @@ return function (loader)
 
   function Methods.server.information (request, store)
     Parameters.check (store, request, {})
-    return {
+    local result = {
       name    = Configuration.http.hostname,
       captcha = Configuration.recaptcha.public_key,
     }
+    local info = store / "info"
+    result ["#users"   ] = info ["#users"   ] or 0
+    result ["#projects"] = info ["#projects"] or 0
+    for id in Layer.pairs (Configuration.resource.project ["/"]) do
+      result ["#" .. id] = info ["#" .. id] or 0
+    end
+    return result
   end
 
   function Methods.server.tos (request, store)
@@ -132,21 +139,19 @@ return function (loader)
         authentication = Parameters.token.authentication,
       }
     })
-    local server_socket, server_port
+    local server_socket
     local running       = Scheduler.running ()
     local results       = {}
     local addserver     = Scheduler.addserver
     Scheduler.addserver = function (s, f)
-      local _, port = assert (s:getsockname ())
       server_socket = s
-      server_port   = port
       addserver (s, f)
     end
     Websocket.server.copas.listen {
       interface = Configuration.server.interface,
       port      = 0,
       protocols = {
-        ["cosyfilter"] = function (ws)
+        ["cosy:filter"] = function (ws)
           ws:send (Value.expression (back_request))
           while ws.state == "OPEN" do
             local message = ws:receive ()
@@ -161,9 +166,20 @@ return function (loader)
       }
     }
     Scheduler.addserver = addserver
-    os.execute ([[luajit -e '_G.port = {{{port}}}; require "cosy.methods.filter"' &]] % {
-      port = server_port,
-    })
+    if Posix.fork () == 0 then
+      package.loaded ["copas"     ] = nil
+      package.loaded ["copas.ev"  ] = nil
+      package.loaded ["ev"        ] = nil
+      package.loaded ["hotswap.ev"] = nil
+      package.loaded ["hotswap"   ] = nil
+      local Filter = loader.require "cosy.methods.filter"
+      local _, port = server_socket:getsockname ()
+      Filter.new ("ws://{{{interface}}}:{{{port}}}" % {
+        interface = Configuration.server.interface,
+        port      = port,
+      })
+      os.exit (0)
+    end
     return function ()
       repeat
         local result = results [1]
@@ -221,7 +237,7 @@ return function (loader)
       local body = "secret="    .. Configuration.recaptcha.private_key
                 .. "&response=" .. request.captcha
                 .. "&remoteip=" .. request.ip
-      local response, status = Http.request (url, body)
+      local response, status = loader.request (url, body)
       assert (status == 200)
       response = Json.decode (response)
       assert (response)
@@ -253,6 +269,8 @@ return function (loader)
     user.reputation  = Configuration.reputation.initial
     user.status      = "active"
     user.type        = "user"
+    local info = store / "info"
+    info ["#users"] = (info ["#users"] or 0) + 1
     if try_only then
       return true
     end
@@ -588,6 +606,8 @@ return function (loader)
     local user = request.authentication.user
     local _ = store / "email" - user.email
     local _ = store / "data"  - user.identifier
+    local info = store / "info"
+    info ["#users"] = info ["#users"] - 1
   end
 
   -- Project
@@ -617,6 +637,8 @@ return function (loader)
     project.permissions = {}
     project.identifier  = request.identifier
     project.type        = "project"
+    local info = store / "info"
+    info ["#projects"] = (info ["#projects"] or 0) + 1
   end
 
   function Methods.project.delete (request, store)
@@ -641,6 +663,8 @@ return function (loader)
       }
     end
     local _ = - project
+    local info = store / "info"
+    info ["#projects"] = info ["#projects"] - 1
   end
 
   for id in Layer.pairs (Configuration.resource.project ["/"]) do
@@ -676,6 +700,8 @@ return function (loader)
       resource.type        = id
       resource.username    = user.username
       resource.projectname = project.projectname
+      local info = store / "info"
+      info ["#" .. id] = (info ["#" .. id] or 0) + 1
     end
 
     function methods.copy (request, store)
@@ -707,6 +733,8 @@ return function (loader)
       resource.type        = id
       resource.username    = user.username
       resource.projectname = project.projectname
+      local info = store / "info"
+      info ["#" .. id] = info ["#" .. id] + 1
     end
 
     function methods.delete (request, store)
@@ -731,6 +759,8 @@ return function (loader)
         }
       end
       local _ = user - resource.id
+      local info = store / "info"
+      info ["#" .. id] = info ["#" .. id] - 1
     end
   end
 

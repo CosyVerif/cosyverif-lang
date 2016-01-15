@@ -9,7 +9,7 @@ return function (loader)
     if not file then
       return nil, err
     end
-    file:write (Value.expression (data))
+    file:write (Value.expression (data) .. "\n")
     file:close ()
     return true
   end
