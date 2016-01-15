@@ -20,7 +20,7 @@ return function (loader)
   local configuration_template = [[
 error_log   error.log;
 pid         {{{pid}}};
-user        {{{user}}};
+{{{user}}}
 
 worker_processes 1;
 events {
@@ -255,7 +255,7 @@ http {
       redis_host     = Configuration.redis.interface,
       redis_port     = Configuration.redis.port,
       redis_database = Configuration.redis.database,
-      user           = os.getenv "USER",
+      user           = Posix.geteuid () == 0 and ("user " .. os.getenv "USER" .. ";") or "",
       path           = package. path:gsub ("5%.2", "5.1") .. ";" .. package. path,
       cpath          = package.cpath:gsub ("5%.2", "5.1") .. ";" .. package.cpath,
       redirects      = table.concat (locations, "\n"),
