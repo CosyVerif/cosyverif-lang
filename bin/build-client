@@ -1,0 +1,191 @@
+#! /usr/bin/env bash
+
+for i in "$@"
+do
+  case ${i} in
+    --l=*|--lua=*)
+      lua_version="${i#*=}"
+      lua_version="${lua_version%/}"
+      shift # past argument=value
+    ;;
+    --in-ci)
+      in_ci=true
+      shift # past argument=value
+    ;;
+    *)
+      echo "Usage: "
+      echo "  install [--lua=LUA_VERSION] [--in-ci]"
+      exit 1;
+    ;;
+  esac
+done
+
+lua_version=${lua_version:-5.2}
+
+if [ ! -z "${in_ci+x}" ]; then
+  red=''
+  green=''
+  nc=''
+else
+  red='\033[0;31m'
+  green='\033[0;32m'
+  nc='\033[0m'
+fi
+
+# Useful variables:
+cosy_temp=$(mktemp -d 2>/dev/null || mktemp -d -t cosy)
+cosy_log="${cosy_temp}/install.log"
+
+echo -e "Temporary: ${green}${cosy_temp}${nc}"
+echo -e "Log file : ${green}${cosy_log}${nc}"
+
+function error ()
+{
+  echo -e "${red}An error happened.${nc}"
+  echo -e "Please read log file: ${red}${cosy_log}${nc}."
+  if [ ! -z "${in_ci+x}" ]; then
+    cat "${cosy_log}"
+  fi
+  exit 1
+}
+
+# Install dependencies:
+function install_dependencies ()
+{
+  echo -n "Installing development packages... "
+  if command -v apt-get; then
+    if sudo apt-get update; then
+      apt_available=true
+    fi
+  fi >> "${cosy_log}" 2>&1
+  if command -v brew; then
+    brew_available=true
+  fi >> "${cosy_log}" 2>&1
+  if [ -z "${apt_available}" ] && [ -z "${brew_available}" ]; then
+    echo -e "${green}skipped${nc}"
+    return
+  fi
+
+  case "$(uname -s)" in
+    "Linux")
+      sudo apt-get update  --yes
+      sudo apt-get install --yes git make clang gcc diffutils patch curl unzip \
+                                 perl build-essential wget python \
+                                 libc6-dev libssl-dev
+      sudo pip install hererocks
+      ;;
+    "Darwin")
+      HOMEBREW_PREFIX=$(brew config | grep "HOMEBREW_PREFIX" | tr -d ' \t' | cut -d ":" -f 2)
+      export CPATH="${HOMEBREW_PREFIX}/include:${CPATH}"
+      export LIBRARY_PATH="${HOMEBREW_PREFIX}/lib:${LIBRARY_PATH}"
+      export LD_LIBRARY_PATH="${HOMEBREW_PREFIX}/lib:${LD_LIBRARY_PATH}"
+      export DYLD_LIBRARY_PATH="${HOMEBREW_PREFIX}/lib:${DYLD_LIBRARY_PATH}"
+      brew update
+      brew install openssl python wget
+      brew link --force openssl
+      pip install hererocks
+      ;;
+    *)
+      echo -e "Error: unknown OS: ${red}$(uname -s)${nc}."
+      exit 1
+      ;;
+  esac >> "${cosy_log}" 2>&1 \
+       && echo -e "${green}success${nc}" \
+       || echo -e "${red}failure${nc}"
+}
+
+# Install lua, luarocks and packages:
+function install_lua () {
+  export CC=clang
+  echo -n "Installing lua ${lua_version} and luarocks... "
+  hererocks "${cosy_temp}" -r^ --lua="${lua_version}" \
+    >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+  dependencies=(
+    argparse
+    luafilesystem
+    luasec
+    lustache
+    serpent
+  )
+  for dependency in ${dependencies[*]}; do
+    if "${cosy_temp}/bin/luarocks" list --porcelain \
+        >> "${cosy_log}" 2>&1 \
+        | grep --silent "${dependency}"; then
+      echo "  Not installing ${dependency} as it is already installed."
+    else
+      echo -n "  Installing ${dependency} as it is not installed... "
+      # shellcheck disable=SC2086
+      "${cosy_temp}/bin/luarocks" install "${dependency}" \
+        >> "${cosy_log}" 2>&1 \
+       && echo -e "${green}success${nc}" \
+       || echo -e "${red}failure${nc}"
+    fi
+  done
+  echo -n "Generating cosy rockspec... "
+  ( # shellcheck disable=SC2091
+    $("${cosy_temp}/bin/luarocks" path | tr "'" ";")
+    export LUA_PATH="${LUA_PATH};./src/?.lua"
+    "${cosy_temp}/bin/lua" src/cosy/rockspec/bin.lua
+  ) >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+  echo -n "Installing cosy (this may take a while)... "
+  { "${cosy_temp}/bin/luarocks" make rockspec/cosyverif-client-master-1.rockspec
+  } >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+}
+
+function fix_string ()
+{
+  echo "$1" \
+    | sed -e 's/^[[:space:]]+/ /' \
+    | sed -e 's/^[[:space:]]*//' \
+    | sed -e 's/[[:space:]]*$//' \
+    | tr '/' '-' \
+    | tr '[:upper:]' '[:lower:]'
+}
+
+function generate_archive () {
+  version=$(fix_string "$(git describe)")
+  os=$(fix_string "$(uname -s)")
+  arch=$(fix_string "$(uname -m)")
+  archive="cosy-client-${version}-${os}-${arch}.sh"
+  cat > "${cosy_temp}/bin/cosy_setpath" <<EOF
+#! /usr/bin/env sh
+
+export LC_ALL=C
+grep -lr "COSY_PREFIX" . | xargs -L1 sed -i ".cosy-back" -e "s|COSY_PREFIX|\$PWD|g"
+find . -type f -name "*.cosy-back" -exec rm -f {} \;
+rm -f $0
+EOF
+  chmod a+x "${cosy_temp}/bin/cosy_setpath"
+  echo -n -e "Packaging in ${green}${archive}${nc}... "
+  {
+    export LC_ALL=C
+    find "${cosy_temp}" -type f -exec sed -i ".cosy-back" -e "s|${cosy_temp}|COSY_PREFIX|g" {} \;
+    find "${cosy_temp}" -type f -name "*.cosy-back" -exec rm -f {} \;
+    ./makeself/makeself.sh \
+      "${cosy_temp}" \
+      "${archive}" \
+      "CosyVerif Client version ${version} for ${os}-${arch}" \
+      "./bin/cosy_setpath"
+  } >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+}
+
+git submodule init
+git submodule update
+trap error ERR
+install_dependencies
+install_lua
+generate_archive
+
+if [ ! -z "${in_ci+x}" ]; then
+  cat "${cosy_log}"
+else
+  rm -rf "${cosy_temp}"
+fi

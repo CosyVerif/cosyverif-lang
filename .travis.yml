@@ -4,23 +4,26 @@ os:
 osx_image: xcode7.2b1
 sudo: required
 dist: trusty
-language: C
 
 install:
-  - ./bin/install --prefix=$HOME/cosy/server --mode=server --sourcepath=$(pwd) --in-ci
-  - ./bin/install --prefix=$HOME/cosy/client --mode=client --sourcepath=$(pwd) --in-ci
+  - ./bin/build-server --in-ci --prefix=$HOME/cosy
+  - ./bin/build-client --in-ci
 
 before_script:
-  - rm    -rf output
-  - mkdir -p  output/server
-  - redis-server --save "" &
-  - sleep 1
+  - rm -rf output && mkdir -p output
+  - redis-server & sleep 1
 
 script:
-  - ${HOME}/cosy/server/bin/cosy-check  output/server --test-format=junit
-  - ${HOME}/cosy/server/bin/cosy-server start --clean
-  - ./tests/user.sh ${HOME}/cosy/server/bin/cosy http://127.0.0.1:8080/
-  - ${HOME}/cosy/server/bin/cosy-server stop
+  - ${HOME}/cosy/bin/cosy-check --output=output --test-format=junit
+
+after_failure:
+  - cat ${HOME}/.cosy/__busted__/nginx/access.log
+  - cat ${HOME}/.cosy/__busted__/nginx/error.log
+  - cat ${HOME}/.cosy/__scenario__/nginx/access.log
+  - cat ${HOME}/.cosy/__scenario__/nginx/error.log
+
+after_success:
+  - luacov-coveralls --excluse "*" --include "cosy" --exclude "test"
 
 notifications:
   recipients:
@@ -28,4 +31,4 @@ notifications:
     - leprieur@lipn.univ-paris13.fr
   email:
     on_success: change
-    on_failure: always
+    on_failure: change

@@ -1,0 +1,12 @@
+[submodule "redis-lua"]
+	path = redis-lua
+	url = https://github.com/nrk/redis-lua.git
+[submodule "openresty"]
+	path = openresty
+	url = https://github.com/openresty/ngx_openresty
+[submodule "sh-realpath"]
+	path = sh-realpath
+	url = https://github.com/mkropat/sh-realpath
+[submodule "makeself"]
+	path = makeself
+	url = https://github.com/megastep/makeself.git

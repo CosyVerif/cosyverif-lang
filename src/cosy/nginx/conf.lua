@@ -10,16 +10,15 @@ return function (loader)
   end
 
   Default.http = {
-    nginx         = os.getenv "COSY_PREFIX" .. "/local/openresty/nginx",
+    nginx         = loader.prefix .. "/nginx",
     hostname      = nil,
     interface     = "*",
     port          = 8080,
     timeout       = 5,
-    pid           = os.getenv "HOME" .. "/.cosy/nginx.pid",
-    configuration = os.getenv "HOME" .. "/.cosy/nginx.conf",
-    error         = os.getenv "HOME" .. "/.cosy/nginx.log",
-    directory     = os.getenv "HOME" .. "/.cosy/nginx",
-    uploads       = os.getenv "HOME" .. "/.cosy/nginx/uploads",
+    pid           = loader.home .. "/nginx.pid",
+    configuration = loader.home .. "/nginx.conf",
+    directory     = loader.home .. "/nginx",
+    uploads       = loader.home .. "/nginx/uploads",
     www           = main:gsub ("cosy/nginx.*", "cosy/www"),
   }
 

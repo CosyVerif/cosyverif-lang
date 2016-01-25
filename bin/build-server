@@ -1,0 +1,235 @@
+#! /usr/bin/env bash
+
+for i in "$@"
+do
+  case ${i} in
+    -p=*|--prefix=*)
+      cosy_prefix="${i#*=}"
+      cosy_prefix="${cosy_prefix%/}"
+      shift # past argument=value
+    ;;
+    --l=*|--lua=*)
+      lua_version="${i#*=}"
+      lua_version="${lua_version%/}"
+      shift # past argument=value
+    ;;
+    --in-ci)
+      in_ci=true
+      shift # past argument=value
+    ;;
+    *)
+      echo "Usage: "
+      echo "  install [--prefix=PREFIX] [--lua=LUA_VERSION] [--in-ci]"
+      exit 1;
+    ;;
+  esac
+done
+
+cosy_prefix=${cosy_prefix:-/usr/local}
+lua_version=${lua_version:-5.2}
+parallel=$(nproc 2> /dev/null || sysctl -n hw.ncpu 2> /dev/null)
+
+if [ ! -z "${in_ci+x}" ]; then
+  red=''
+  green=''
+  nc=''
+else
+  red='\033[0;31m'
+  green='\033[0;32m'
+  nc='\033[0m'
+fi
+
+# Useful variables:
+cosy_temp=$(mktemp -d 2>/dev/null || mktemp -d -t cosy)
+cosy_log="${cosy_temp}/install.log"
+
+echo -e "Prefix   : ${green}${cosy_prefix}${nc}"
+echo -e "Temporary: ${green}${cosy_temp}${nc}"
+echo -e "Log file : ${green}${cosy_log}${nc}"
+
+function error ()
+{
+  echo -e "${red}An error happened.${nc}"
+  echo -e "Please read log file: ${red}${cosy_log}${nc}."
+  if [ ! -z "${in_ci+x}" ]; then
+    cat "${cosy_log}"
+  fi
+  exit 1
+}
+
+# Install dependencies:
+function install_dependencies ()
+{
+  echo -n "Installing development packages... "
+  if command -v apt-get; then
+    if sudo apt-get update; then
+      apt_available=true
+    fi
+  fi >> "${cosy_log}" 2>&1
+  if command -v brew; then
+    brew_available=true
+  fi >> "${cosy_log}" 2>&1
+  if [ -z "${apt_available}" ] && [ -z "${brew_available}" ]; then
+    echo -e "${green}skipped${nc}"
+    return
+  fi
+
+  case "$(uname -s)" in
+    "Linux")
+      sudo apt-get update  --yes
+      sudo apt-get install --yes git make clang gcc diffutils patch curl unzip \
+                                 perl build-essential wget python python-pip \
+                                 libc6-dev libssl-dev libev-dev \
+                                 libreadline-dev libncurses5-dev libpcre3-dev \
+                                 redis-server imagemagick
+      sudo pip install hererocks
+      ;;
+    "Darwin")
+      HOMEBREW_PREFIX=$(brew config | grep "HOMEBREW_PREFIX" | tr -d ' \t' | cut -d ":" -f 2)
+      export CPATH="${HOMEBREW_PREFIX}/include:${CPATH}"
+      export LIBRARY_PATH="${HOMEBREW_PREFIX}/lib:${LIBRARY_PATH}"
+      export LD_LIBRARY_PATH="${HOMEBREW_PREFIX}/lib:${LD_LIBRARY_PATH}"
+      export DYLD_LIBRARY_PATH="${HOMEBREW_PREFIX}/lib:${DYLD_LIBRARY_PATH}"
+      brew update
+      brew install openssl libev pcre python redis imagemagick wget
+      brew link --force openssl
+      pip install hererocks
+      ;;
+    *)
+      echo -e "Error: unknown OS: ${red}$(uname -s)${nc}."
+      exit 1
+      ;;
+  esac >> "${cosy_log}" 2>&1 \
+       && echo -e "${green}success${nc}" \
+       || echo -e "${red}failure${nc}"
+  export CPATH="${cosy_prefix}/include:${CPATH}"
+  export LIBRARY_PATH="${cosy_prefix}/lib:${LIBRARY_PATH}"
+  export LD_LIBRARY_PATH="${cosy_prefix}/lib:${LD_LIBRARY_PATH}"
+}
+
+# Install lua, luarocks and packages:
+function install_lua () {
+  export CC=clang
+  echo -n "Installing lua ${lua_version} and luarocks... "
+  hererocks "${cosy_prefix}" -r^ --lua="${lua_version}" \
+    >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+  dependencies=(
+    argparse
+    busted
+    luacheck
+    luacov
+    luacov-coveralls
+    luafilesystem
+    luasec
+    lustache
+    serpent
+  )
+  for dependency in ${dependencies[*]}; do
+    if "${cosy_prefix}/bin/luarocks" list --porcelain \
+        >> "${cosy_log}" 2>&1 \
+        | grep --silent "${dependency}"; then
+      echo "  Not installing ${dependency} as it is already installed."
+    else
+      echo -n "  Installing ${dependency} as it is not installed... "
+      # shellcheck disable=SC2086
+      "${cosy_prefix}/bin/luarocks" install "${dependency}" \
+        >> "${cosy_log}" 2>&1 \
+       && echo -e "${green}success${nc}" \
+       || echo -e "${red}failure${nc}"
+    fi
+  done
+  echo -n "  Installing redis-lua (patched for cosy)... "
+  ( cd redis-lua
+    "${cosy_prefix}/bin/luarocks" make rockspec/redis-lua-scm-1.rockspec
+  ) >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+  echo -n "Installing lua 5.1 and luarocks for nginx... "
+  hererocks "${cosy_temp}/lua_install" -r^ --lua="5.1" \
+    >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+  nginx_dependencies=(
+    lua-cjson
+    lua-resty-http
+    md5
+  )
+  for dependency in ${nginx_dependencies[*]}; do
+    if "${cosy_temp}/lua_install/bin/luarocks" list --tree="${cosy_prefix}" --porcelain \
+        >> "${cosy_log}" 2>&1 \
+        | grep --silent "${dependency}"; then
+      echo "  Not installing ${dependency} as it is already installed."
+    else
+      echo -n "  Installing ${dependency} as it is not installed... "
+      # shellcheck disable=SC2086
+      "${cosy_temp}/lua_install/bin/luarocks" install --tree="${cosy_prefix}" "${dependency}" \
+        >> "${cosy_log}" 2>&1 \
+       && echo -e "${green}success${nc}" \
+       || echo -e "${red}failure${nc}"
+    fi
+  done
+  echo -n "Installing sh-realpath... "
+  ( cp sh-realpath/realpath.sh "${cosy_prefix}/bin/"
+    chmod a+x "${cosy_prefix}/bin/realpath.sh"
+  ) >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+  echo -n "Generating cosy rockspec... "
+  ( # shellcheck disable=SC2091
+    $("${cosy_prefix}/bin/luarocks" path | tr "'" ";")
+    export LUA_PATH="${LUA_PATH};./src/?.lua"
+    "${cosy_prefix}/bin/lua" src/cosy/rockspec/bin.lua
+  ) >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+  echo -n "Installing cosy (this may take a while)... "
+  ( rm -rf "${cosy_prefix}/share/lua/${lua_version}/cosy"
+    "${cosy_prefix}/bin/luarocks" make rockspec/cosyverif-master-1.rockspec
+    rm -rf "${cosy_prefix}/share/lua/${lua_version}/cosy"
+    ln -s  "${PWD}/src/cosy" \
+           "${cosy_prefix}/share/lua/${lua_version}/cosy"
+  ) >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+}
+
+# Install openresty:
+function install_openresty ()
+{
+  echo -n "Installing openresty... "
+  (
+    cd openresty || exit 1
+    make
+    cd ngx_openresty-1.9.3.2rc3 || exit 1
+    ./configure --prefix="${cosy_prefix}" \
+                --without-lua51 \
+                --with-ipv6 \
+                --with-pcre-jit
+    make -j"${parallel}"
+    make install
+    make clean
+  ) >> "${cosy_log}" 2>&1 \
+    && echo -e "${green}success${nc}" \
+    || echo -e "${red}failure${nc}"
+}
+
+git submodule init
+git submodule update
+trap error ERR
+install_dependencies
+install_lua
+install_openresty
+
+echo "You can now try the following commands:"
+echo "- ${cosy_prefix}/bin/cosy-server start [--clean] [--force]"
+echo "- ${cosy_prefix}/bin/cosy-server stop  [--force]"
+echo "- ${cosy_prefix}/bin/cosy-server version"
+echo "- ${cosy_prefix}/bin/cosy"
+echo "The development environment also provides two commands:"
+echo "- ${cosy_prefix}/bin/cosy-check"
+
+if [ ! -z "${in_ci+x}" ]; then
+  cat "${cosy_log}"
+fi

@@ -2,6 +2,7 @@ return function (loader)
 
   local Configuration = loader.load "cosy.configuration"
   local I18n          = loader.load "cosy.i18n"
+  local Scheduler     = loader.load "cosy.scheduler"
   local Token         = loader.load "cosy.token"
   local Default       = loader.load "cosy.configuration.layers".default
   local Layer         = loader.require "layeredata"
@@ -143,7 +144,7 @@ return function (loader)
               _ = i18n ["check:avatar:expired"],
             }
       end
-      os.execute ([[
+      Scheduler.execute ([[
         convert {{{filename}}} -resize {{{width}}}x{{{height}}} png:{{{filename}}}
       ]] % {
         filename = filename,
