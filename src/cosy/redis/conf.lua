@@ -7,7 +7,6 @@ return function (loader)
     data          = loader.home .. "/redis.data",
     interface     = "127.0.0.1",
     database      = 0,
-    pool_size     = 10,
     pid           = loader.home .. "/redis.pid",
     log           = loader.home .. "/redis.log",
     db            = "redis.db",
